@@ -1,0 +1,2461 @@
+# ------------------------------------------------------------------------------
+# Required libraries
+library(readxl)
+library(ggplot2)
+library(gridExtra)
+library(car)
+library(nlme)
+library(AICcmodavg)
+library(wiqid)
+library(multcompView)
+library(predictmeans)
+library(tidyverse)
+library(ggpubr)
+library(gridExtra)
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Literature
+# https://www.scribbr.com/statistics/anova-in-r/
+# https://www.r-bloggers.com/2020/10/anova-in-r-2/
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Data loading
+setwd("C:/Users/olena/OneDrive/Desktop/ddR LN LW")
+ddpcr_data <- read_excel('olena.xlsx', sheet = "ddpcr")
+ddpcr_data
+head(ddpcr_data)
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# qepA gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+qepa.aov <- aov(qepA ~ Climate * Strain, data = ddpcr_data)
+anova(qepa.aov)
+
+# Diagnostic plots 
+plot(qepa.aov, 1)
+plot(qepa.aov, 2)
+plot(qepa.aov, 3)
+plot(qepa.aov, 4)
+plot(qepa.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(qepA ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_qepa <- residuals(object = qepa.aov)
+shapiro.test(x = aov_residuals_qepa)
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(qepa.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | qepA gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(qepA ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(qepA~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(qepA~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(qepA~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(qepA~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+
+# Comparing different models. The output shows that M4 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+#The AICc has correction for small sample size, and hence it is better than standard AIC
+
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+#The better for next analysis is M3 model
+
+# This command plots the standardized residuals versus fitted values.
+plot(M3.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M3.gls)
+anova(M3.gls)
+
+# Specifying factors for pairwise comparisons using predictmeans function
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+
+# This library and command allow to perform pairwise comparisons. This is alternative method to lsmeans function. 
+# The Benjamini-Hochberg adjustment of p values allows to perform all pairwise comparisons.
+predictmeans(M3.gls,modelterm="Strain", pairwise=T, adj="BH")
+predictmeans(M3.gls,modelterm="Climate:Strain", adj="BH")
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_qepa<-ggplot(aes(y = qepA, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('qepA ')*'% of 16S gene'^-1),
+                     limits = c(0, 30),              
+                     breaks = c(0, 10, 20, 30), 
+                     labels = c(0, 10, 20, 30))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_qepa
+
+
+
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+#vanA_gene (Lena)
+# ------------------------------------------------------------------------------
+
+# Standard two-way Anova's
+vana.aov <- aov(vanA ~ Climate * Strain, data = ddpcr_data)
+anova(vana.aov)
+
+# Diagnostic plots 
+plot(vana.aov, 1)
+plot(vana.aov, 2)
+plot(vana.aov, 3)
+plot(vana.aov, 4)
+plot(vana.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(vanA ~ Climate * Strain, center=mean, data = ddpcr_data)
+#Heterogeneity 
+
+# Testing the normality assumption
+aov_residuals_vana <- residuals(object = vana.aov)
+shapiro.test(x = aov_residuals_vana)
+
+#normal, but heterogeneity -> we can`t use  just anova`
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(vana.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | vanA gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(vanA ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(vanA~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(vanA~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(vanA~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(vanA~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+#M3 is better 
+
+# This command plots the standardized residuals versus fitted values.
+plot(M3.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M3.gls)
+anova(M3.gls)
+
+# Specifying factors for pairwise comparisons using predictmeans function
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+
+# This library and command allow to perform pairwise comparisons. This is alternative method to lsmeans function. 
+# The Benjamini-Hochberg adjustment of p values allows to perform all pairwise comparisons.
+predictmeans(M3.gls,modelterm="Climate:Strain", adj="BH")
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_vanA<-ggplot(aes(y = vanA, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('vanA ')*'% of 16S gene'^-1),
+                     limits = c(0, 4.1),              
+                     breaks = c(0, 1, 2, 3), 
+                     labels = c(0, 1, 2, 3))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_vanA
+# ------------------------------------------------------------------------------
+
+
+
+
+
+# ------------------------------------------------------------------------------
+# aaCC2 gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+aacc2.aov <- aov(aaCC2 ~ Climate * Strain, data = ddpcr_data)
+anova(aacc2.aov)
+
+# Diagnostic plots 
+plot(aacc2.aov, 1)
+plot(aacc2.aov, 2)
+plot(aacc2.aov, 3)
+plot(aacc2.aov, 4)
+plot(aacc2.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(aaCC2 ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_aacc2 <- residuals(object = aacc2.aov)
+shapiro.test(x = aov_residuals_aacc2)
+
+#non-normal, heterogeneity 
+
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(aacc2.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | aaCC2 gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(aaCC2 ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(aaCC2~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(aaCC2~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(aaCC2~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(aaCC2~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+
+#M3  is better 
+# This command plots the standardized residuals versus fitted values.
+plot(M3.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M3.gls)
+anova(M3.gls)
+
+# Specifying factors for pairwise comparisons using predictmeans function
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+
+# This library and command allow to perform pairwise comparisons. This is alternative method to lsmeans function. 
+# The Benjamini-Hochberg adjustment of p values allows to perform all pairwise comparisons.
+predictmeans(M3.gls,modelterm="Climate", pairwise=T, adj="BH")
+
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_aaCC2<-ggplot(aes(y = aaCC2, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('aaCC2')*'% of 16S gene'^-1),
+                     limits = c(0, 0.2),              
+                     breaks = c(0, 0.1, 0.1), 
+                     labels = c(0, 0.1, 0.1))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_aaCC2
+# ------------------------------------------------------------------------------
+
+
+
+
+
+# ------------------------------------------------------------------------------
+# ermC gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+ermc.aov <- aov(ermC ~ Climate * Strain, data = ddpcr_data)
+anova(ermc.aov)
+
+# Diagnostic plots 
+plot(ermc.aov, 1)
+plot(ermc.aov, 2)
+plot(ermc.aov, 3)
+plot(ermc.aov, 4)
+plot(ermc.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(ermC ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_ermc <- residuals(object = ermc.aov)
+shapiro.test(x = aov_residuals_ermc)
+
+#non-normal, heterogeneity 
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(ermc.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | ermC gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(ermC ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(ermC~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(ermC~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(ermC~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(ermC~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+# This command plots the standardized residuals versus fitted values.
+plot(M2.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+
+#M2 is better 
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M2.gls)
+anova(M2.gls)
+
+# Specifying factors for pairwise comparisons using predictmeans function
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+
+# This library and command allow to perform pairwise comparisons. This is alternative method to lsmeans function. 
+# The Benjamini-Hochberg adjustment of p values allows to perform all pairwise comparisons.
+predictmeans(M2.gls,modelterm="Climate", pairwise=T, adj="BH")
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_ermC<-ggplot(aes(y = ermC, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('ermC')*'% of 16S gene'^-1),
+                     limits = c(-0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_ermC
+# ------------------------------------------------------------------------------
+
+
+
+# ------------------------------------------------------------------------------
+# bla2 gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+bla2.aov <- aov(bla2 ~ Climate * Strain, data = ddpcr_data)
+anova(bla2.aov)
+
+# Diagnostic plots 
+plot(bla2.aov, 1)
+plot(bla2.aov, 2)
+plot(bla2.aov, 3)
+plot(bla2.aov, 4)
+plot(bla2.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(bla2 ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_bla2 <- residuals(object = bla2.aov)
+shapiro.test(x = aov_residuals_bla2)
+
+#Normal, but heterogeneity, that is why we can`t use just anova
+`
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(bla2.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | bla2 gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(bla2 ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(bla2~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(bla2~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(bla2~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(bla2~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+
+#M4 is better 
+
+# This command plots the standardized residuals versus fitted values.
+plot(M4.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M4.gls)
+anova(M4.gls)
+
+# Specifying factors for pairwise comparisons using predictmeans function
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+
+# This library and command allow to perform pairwise comparisons. This is alternative method to lsmeans function. 
+# The Benjamini-Hochberg adjustment of p values allows to perform all pairwise comparisons.
+predictmeans(M4.gls,modelterm="Climate", pairwise=T, adj="BH")
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_bla2<-ggplot(aes(y = bla2, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('bla2')*'% of 16S gene'^-1),
+                     limits = c(0, 0.8),              
+                     breaks = c(0, 0.4, 0.8), 
+                     labels = c(0, 0.4, 0.8))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla2
+# ------------------------------------------------------------------------------
+
+
+
+# ------------------------------------------------------------------------------
+# sull1 gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+sul1.aov <- aov(sull1 ~ Climate * Strain, data = ddpcr_data)
+anova(sul1.aov)
+
+# Diagnostic plots 
+plot(sul1.aov, 1)
+plot(sul1.aov, 2)
+plot(sul1.aov, 3)
+plot(sul1.aov, 4)
+plot(sul1.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(sull1 ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_sul1 <- residuals(object = sul1.aov)
+shapiro.test(x = aov_residuals_sul1)
+
+# Homogeneity, but non-normal, as I understand, we can`t use just anova
+
+# Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(sul1.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | sul1 gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(sull1 ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(sull1~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(sull1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(sull1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(sull1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+#M1 is better 
+
+# This command plots the standardized residuals versus fitted values.
+plot(M1.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M1.gls)
+anova(M1.gls)
+# Please note that Model1 is the standard anova
+# The output of ANOVA indicate no significant effect of the factors and CxS interaction on the level o sul1 gene
+# Thus, pairwise comparisons are unnecessary
+
+# Specifying factors for pairwise comparisons using predictmeans function
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+
+# This library and command allow to perform pairwise comparisons. This is alternative method to lsmeans function. 
+# The Benjamini-Hochberg adjustment of p values allows to perform all pairwise comparisons.
+predictmeans(M1.gls,modelterm="Strain", pairwise=T, adj="BH")
+predictmeans(M1.gls,modelterm="Climate:Strain", adj="BH")
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_sull1<-ggplot(aes(y = sull1, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('sull1')*'% of 16S gene'^-1),
+                     limits = c(0, 0.4),              
+                     breaks = c(0, 0.2, 0.4), 
+                     labels = c(0, 0.2, 0.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_sull1
+# ------------------------------------------------------------------------------
+
+
+
+# ------------------------------------------------------------------------------
+# bla1 gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+bla1.aov <- aov(bla1 ~ Climate * Strain, data = ddpcr_data)
+anova(bla1.aov)
+
+# Diagnostic plots 
+plot(bla1.aov, 1)
+plot(bla1.aov, 2)
+plot(bla1.aov, 3)
+plot(bla1.aov, 4)
+plot(bla1.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(bla1 ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_bla1 <- residuals(object = bla1.aov)
+shapiro.test(x = aov_residuals_bla1)
+
+#Non-normal, heterogeneity -> we cannot use just anova 
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(bla1.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | bla1 gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(bla1 ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(bla1~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(bla1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(bla1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(bla1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+#M2 is better 
+# This command plots the standardized residuals versus fitted values.
+plot(M2.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M2.gls)
+anova(M2.gls)
+# The output of ANOVA for chosen model indicate no significant effect of the factors and CxS interaction on the level o bla1 gene
+# Thus, pairwise comparisons are unnecessary
+
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for bla1 gene 
+plot_bla1<-ggplot(aes(y = bla1, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('bla1')*'% of 16S gene'^-1),
+                     limits = c(0, 0.4),              
+                     breaks = c(0, 0.2, 0.4), 
+                     labels = c(0, 0.2, 0.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla1
+# ------------------------------------------------------------------------------
+
+
+
+# ------------------------------------------------------------------------------
+# bla_ctxM gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+bla_ctxM.aov <- aov(bla_ctxM ~ Climate * Strain, data = ddpcr_data)
+anova(bla_ctxM.aov)
+
+# Diagnostic plots 
+plot(bla_ctxM.aov, 1)
+plot(bla_ctxM.aov, 2)
+plot(bla_ctxM.aov, 3)
+plot(bla_ctxM.aov, 4)
+plot(bla_ctxM.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(bla_ctxM ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_bla_ctxM <- residuals(object = bla_ctxM.aov)
+shapiro.test(x = aov_residuals_bla_ctxM)
+#Homogeneity, but non-normal 
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(bla_ctxM.aov)
+
+# General comment about standard two-way anova used above
+# - assumptions are not met, especially variances are heterogenous
+# Thus, we have to try applying another parametric method, e.g. that one presented below. 
+
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | bla_ctxM gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(bla_ctxM ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(bla_ctxM~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(bla_ctxM~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(bla_ctxM~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(bla_ctxM~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+#M2 is better 
+# This command plots the standardized residuals versus fitted values.
+plot(M2.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M2.gls)
+anova(M2.gls)
+# The output of ANOVA for chosen model indicate no significant effect of the factors and CxS interaction on the level o bla_ctxM gene
+# Thus, pairwise comparisons are unnecessary
+
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for bla_ctxM gene 
+plot_bla_ctxM<-ggplot(aes(y = bla_ctxM, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('bla_ctxM')* '% of 16S gene'^-1),
+                     limits = c(0, 2.4),              
+                     breaks = c(0, 1.2, 2.4), 
+                     labels = c(0, 1.2, 2.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla_ctxM
+# ------------------------------------------------------------------------------
+
+
+
+# ------------------------------------------------------------------------------
+# intI1 gene
+# ------------------------------------------------------------------------------
+# Standard two-way Anova's
+int1.aov <- aov(intI1 ~ Climate * Strain, data = ddpcr_data)
+anova(int1.aov)
+
+# Diagnostic plots 
+plot(int1.aov, 1)
+plot(int1.aov, 2)
+plot(int1.aov, 3)
+plot(int1.aov, 4)
+plot(int1.aov, 5)
+
+# Testing the homogeneity of variance assumption
+leveneTest(intI1 ~ Climate * Strain, center=mean, data = ddpcr_data)
+
+# Testing the normality assumption
+aov_residuals_int1 <- residuals(object = int1.aov)
+shapiro.test(x = aov_residuals_int1)
+
+
+#Pairwise comparisons using post-hoc Tukey HSD test
+TukeyHSD(int1.aov)
+
+# General comment about standard two-way anova used above
+
+
+#Normal, homogeneity, may we use standart anova? 
+
+anova(int1.aov)
+
+# ------------------------------------------------------------------------------
+# Generalised least squares (GLS) model | intl1 gene
+# ------------------------------------------------------------------------------
+# Graph showing residuals versus fitted values for the linear regression model (Zuur, str 90 "A protocol") 
+residuals <- lm(intI1 ~ Climate * Strain, data = ddpcr_data)
+ddpcr_data$Climate<-factor(ddpcr_data$Climate)
+ddpcr_data$Strain<-factor(ddpcr_data$Strain)
+plot(residuals, which=c(1), col=1, add.smooth=F, caption="")
+plot(ddpcr_data$Climate, resid(residuals), xlab = "Climate", ylab="Residuals")
+plot(ddpcr_data$Strain, resid(residuals), xlab = "Strain", ylab="Residuals")
+
+
+# Constructing different models: M1 - linear regression model without any variance covariates 
+# M2-M4 are models with different variance covariates fitted (Zuur, page 89)
+M1.gls <- gls(intI1~Climate*Strain, data = ddpcr_data)
+M2.gls <- gls(intI1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate))
+M3.gls <- gls(intI1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Strain))
+M4.gls <- gls(intI1~Climate*Strain, data = ddpcr_data, weights=varIdent(form =~1|Climate * Strain))
+
+# Comparing different models. The output shows that M1 model is the best as it has the lowest AIC (Zuur, str 90)  
+anova(M1.gls, M2.gls, M3.gls, M4.gls)
+
+# The AICc has correction for small sample size, and hence it is better than standard AIC
+AICtable(AICc(M1.gls, M2.gls, M3.gls, M4.gls))
+
+#M1 is better 
+# This command plots the standardized residuals versus fitted values.
+plot(M1.gls, col=1) # This shows that there is no sign of heterogeneity.
+
+# These commands run the anova, which gives the information of the significance of the fixed explanatory variables.
+# The output shows that two-way interaction is significant.
+summary(M1.gls)
+anova(M1.gls) 
+# Please note that Model1 is the standard anova
+# The output of ANOVA indicate no significant effect of the factors and CxS interaction on the level o intl1 gene
+# Thus, pairwise comparisons are unnecessary
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Plotting the data for qepA gene 
+plot_intI1<-ggplot(aes(y = intI1, x = Climate, group = Climate), data = ddpcr_data)+
+  facet_grid(.~Strain)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4","blue","tomato4"), 
+               fill=c("skyblue2","tomato","skyblue2","tomato"), fatten=2, width=.6)+
+  scale_y_continuous(name =expression(italic('int1')* '% of 16S gene'^-1),
+                     limits = c(0, 0.1),              
+                     breaks = c(0, 0.05, 0.1), 
+                     labels = c(0, 0.05, 0.1))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_intI1
+# ------------------------------------------------------------------------------
+
+# Open tiff device
+tiff("genes1.tiff", width = 6, height = 8, units = 'in', res = 600, bg = "white")
+
+# Arrange plots using gridExtra::grid.arrange
+gridExtra::grid.arrange(plot_intI1, 
+                        plot_sull1,
+                        plot_aaCC2,
+                        ncol = 1, nrow = 3)
+
+# Close tiff device
+dev.off()
+ 
+
+
+tiff("genes2.tiff", width = 6, height = 8, units = 'in', res = 600, bg = "white")
+
+# Arrange plots using gridExtra::grid.arrange
+gridExtra::grid.arrange(plot_qepa, 
+                        plot_ermC,
+                        plot_vanA,
+                        ncol = 1, nrow = 3)
+
+# Close tiff device
+dev.off()
+
+
+
+tiff("genes3.tiff", width = 6, height = 8, units = 'in', res = 600, bg = "white")
+
+# Arrange plots using gridExtra::grid.arrange
+gridExtra::grid.arrange(plot_bla1, 
+                        plot_bla2,
+                        plot_bla_ctxM,
+                        ncol = 1, nrow = 3)
+
+# Close tiff device
+dev.off()
+
+# General comments
+# intl1 gene        |      GLS model 1 (standard 2-way anova)
+# bla_ctxM gene     |      GLS model 2
+# bla1 gene         |      GLS model 2
+# sul1 gene         |      GLS model 1 (standard 2-way anova)
+# bla2 gene         |      GLS model 4
+# ermC gene         |      GLS model 2
+# aaCC2 gene        |      GLS model 3
+# vanA gene         |      GLS model 3
+# qepA gene         |      GLS model 3
+
+
+
+
+#-------------------------------------------------------------------------------
+# Additional notes
+
+# Plotting the data for qepA gene (regular boxplot shows the minimum non-outlier, the first quartile, the median, the third quartile, and the maximum non-outlier of numeric data in a single plot)
+plot_qepa<-ggboxplot(ddpcr_data, x = "Climate", y = "qepA",
+                     fill = "Climate", palette = c("skyblue2", "tomato"), facet.by = "Strain", add=c("jitter"), add.params = list(size = 1))
+
+plot_qepa
+# ------------------------------------------------------------------------------
+
+
+
+
+
+#----------------------------------------------------------------------------#
+#Heatmap for all strains % in 16s
+
+library(ggplot2)
+library(reshape2)
+library(viridis)
+library(viridisLite)
+library(hrbrthemes)
+library(svglite)
+library(dplyr)
+
+# Load files
+Heatmap <- read.csv("C:/Users/olena/OneDrive/Desktop/Heatmap.csv", row.names=1)
+heatmap_all_copy_percent<-data.matrix(Heatmap)
+
+#Adding new labels 
+values <- c("Aphanizomenon  gracile","Aphanizomenon klebahnii", "Chrysosporum bergii", "Cuspidothrix issatschenkoi", "Planktothrix agardhii", "Raphidiopsis raciborskii")
+times <- c(6, 1, 2, 4, 3,2)
+aphanizomenon_labels <- rep(paste(values), times)
+rownames(heatmap_all_copy_percent) <- paste(aphanizomenon_labels, rownames(heatmap_all_copy_percent))
+
+#Function for creating a heatmap
+create_heatmap <- function(data, legend_title, filename) {
+  
+  # Reshape the data into long format
+  data_long <- reshape2::melt(data)
+  
+  # Calculate the logarithm (base 2) of the values in the data matrix
+  data_long$log10_value <- log10(data_long$value)
+  
+  # Replace -Inf values with 0
+  data_long$log10_value[is.infinite(data_long$log10_value)] <- -4.2
+  
+  # Create ggplot visualization
+  map <- ggplot(data_long, aes(x = Var2, y = reorder(Var1, desc(Var1)), 
+                               fill = data_long$log10_value)) +
+    geom_tile(color = "white", width = 1, height = 1) +
+    scale_fill_viridis(option = "viridis", name = legend_title) +
+    labs(x = "", y = "", title = "") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+          plot.title = element_text(face = "bold"),
+          plot.subtitle = element_text(face = "bold.italic"),
+          axis.text.y = element_text(face = "italic", size = 16)) +
+    
+    geom_text(aes(label = ifelse(data_long$value == 0, "0", 
+                                 format(data_long$value, digits = 2, scientific = FALSE))), 
+              color = "white", size = 5)
+  
+  print(map)
+  # Save the plot as an tiff file
+  ggsave(filename, map, device = "tiff", width = 25, height = 15)
+}
+
+# Create heatmaps
+create_heatmap(heatmap_all_copy_percent, "log10, % in 16S", 'All strains % in 16S.tiff')
+
+
+
+
+
+#-------------------------------------------------------------------------#
+
+
+#Correlation matrix for genes#
+
+library(corrplot)
+library(RColorBrewer)
+library("Hmisc")
+install.packages("Hmisc")
+library(readxl)
+
+
+#Loading data
+
+dataCor<-ddpcr_data <- read_excel('olena.xlsx', sheet = "ddPCR all")
+
+#All strains correlation 
+
+All_strains <- dataCor[1:18, c("IntI1", "sull1","bla1", "bla2","aaCC2", "ermC", "bla-ctxM","bla-oxa")]
+
+All_strainsM<-data.matrix(All_strains)
+M<-cor(All_strainsM)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+
+
+
+#Curent 44 strain Correlation 
+
+dataCor<-ddpcr_data <- read_excel('olena.xlsx', sheet = "ddpcr")
+
+CurCor44 <- dataCor[1:5, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+
+CurCor44M<-data.matrix(CurCor44)
+M<-cor(CurCor44M)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Elevated 44 strain Correlation 
+
+ElevCor44 <- dataCor[6:10, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+
+ElevCor44M<-data.matrix(ElevCor44)
+M<-cor(ElevCor44M)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+
+
+#Current vs Elevated  44 strain Correlation 
+
+CurElevCor44 <- dataCor[1:10, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+
+CurElevCor44M<-data.matrix(CurElevCor44)
+M<-cor(CurElevCor44M)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+
+
+
+
+#Current 97 strain Correlation 
+
+CurCor97 <- dataCor[11:15, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+
+CurCor97M<-data.matrix(CurCor97)
+M<-cor(CurCor97M)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+#Elevated 97 strain Correlation 
+
+ElevCor97 <- dataCor[16:20, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+
+ElevCor97M<-data.matrix(ElevCor97)
+M<-cor(ElevCor97M)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+
+#Current vs Elevated 97 strain Correlation 
+
+CurElevCor97 <- dataCor[11:20, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+
+CurElevCor97M<-data.matrix(CurElevCor97)
+M<-cor(CurElevCor97M)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+#Current 44 vs 97 strain Correlation 
+
+Cur_all1 <- dataCor[1:5, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+Cur_all2 <- dataCor[11:15, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+Cur_all <- rbind(Cur_all1, Cur_all2)
+Cur_allM<-data.matrix(Cur_all)
+M<-cor(Cur_allM)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+#Elevated 44 vs 97 strain Correlation 
+
+Elev_all1 <- dataCor[6:10, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+Elev_all2 <- dataCor[16:20, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+Elev_all <- rbind(Elev_all1, Elev_all2)
+Elev_allM<-data.matrix(Elev_all)
+M<-cor(Elev_allM)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+#All_Correlation 
+
+Cor_all <- dataCor[1:20, c("intI1", "sull1", "aaCC2","bla1", "bla2", "bla_ctxM", "vanA", "ermC", "qepA")]
+Cor_allM<-data.matrix(Cor_all)
+M<-cor(Cor_allM)
+
+
+#Calculating correlation coefficients and p-values (Spearman correlation)
+
+M2<-cor(M, method = "spearman")
+M2
+M3 <- rcorr(as.matrix(M), type=c("spearman"))
+
+# Extract the correlation coefficients
+M3$r
+# Extract p-values
+M3$P
+
+#Adding p-values and cor-values  on plot 
+
+M4 <- rcorr(as.matrix(M), type = c("spearman"))
+M5 <- M4$r
+p_mat <- M4$P
+
+
+
+
+# Visualization of correlation Spearman matrix 
+col <- colorRampPalette(c("darkblue", "pink", "darkred"))(50)
+
+#I don`t why, but I can`t add the expession for bla [ctxM],  ir does`nt work :( 
+#axis_labels <- (c("intI1", "sull1", "aaCC2","bla1", "bla2", expression (bla[ctxM]), "vanA", "ermC", "qepA"))
+
+
+corrplot(M5, method = "circle", type = "full", order = "hclust", col = col, diag = FALSE, addrect = 2, 
+         p.mat = p_mat, insig = 'label_sig', sig.level = c(0.001, 0.01, 0.05), pch.cex = 1, pch.col = 'white', 
+         cl.ratio = 0.2, tl.cex = 1, tl.col = 'black', addgrid.col = 'lightgrey', font = 3)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#t-test additional 
+
+
+
+
+# ------------------------------------------------------------------------------
+# Required libraries
+library(readxl)
+library(car)
+library(ggplot2)
+library(gridExtra)
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Literature
+# https://statsandr.com/blog/student-s-t-test-in-r-and-by-hand-how-to-compare-two-groups-under-different-scenarios/
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Data loading
+ddpcr <- read_excel('olena.xlsx', sheet = "ddpcr")
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# C. issatschenkoi W44
+Cissa44 <- ddpcr[ddpcr$Strain == "W44",]
+# ------------------------------------------------------------------------------
+
+# int1 gene
+# =========
+
+with(Cissa44, shapiro.test(intI1[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa44, shapiro.test(intI1[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(intI1~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+t.test(intI1 ~ Climate, data = Cissa44, var.equal = T) # t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_intI1_Cissa44<-ggplot(aes(y = intI1, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('intI1')* '% of 16S gene'^-1),
+                     limits = c(0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_intI1_Cissa44
+
+
+
+# sul1 gene
+# =========
+
+with(Cissa44, shapiro.test(sull1[Climate=="Current"])) # Testing normality assumption [NOT]
+with(Cissa44, shapiro.test(sull1[Climate=="Elevated"])) # Testing normality assumption [NOT]
+leveneTest(sull1~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+wilcox.test(sull1 ~ Climate, data=Cissa44) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_sull1_Cissa44<-ggplot(aes(y = sull1, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('sull1')*'% of 16S gene'^-1),
+                     limits = c(0, 0.6),              
+                     breaks = c(0, 0.3, 0.6), 
+                     labels = c(0, 0.3, 0.6))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_sull1_Cissa44
+
+
+
+
+# aaCC2 gene
+# =========
+
+with(Cissa44, shapiro.test(aaCC2[Climate=="Current"])) # Testing normality assumption [NOT]
+with(Cissa44, shapiro.test(aaCC2[Climate=="Elevated"])) # Testing normality assumption [OK let's say]
+leveneTest(aaCC2~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+wilcox.test(aaCC2 ~ Climate, data=Cissa44) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_aaCC2_Cissa44<-ggplot(aes(y = aaCC2, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('aaCC2')*'% of 16S gene'^-1),
+                     limits = c(0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_aaCC2_Cissa44
+
+
+
+# bla1 gene
+# =========
+
+with(Cissa44, shapiro.test(bla1[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa44, shapiro.test(bla1[Climate=="Elevated"])) # Testing normality assumption [NOT]
+leveneTest(bla1~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+wilcox.test(bla1 ~ Climate, data=Cissa44) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_bla1_Cissa44<-ggplot(aes(y = bla1, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('bla1')*'% of 16S gene'^-1),
+                     limits = c(0, 0.4),              
+                     breaks = c(0, 0.2, 0.4), 
+                     labels = c(0, 0.2, 0.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla1_Cissa44
+
+
+# bla2 gene
+# =========
+
+with(Cissa44, shapiro.test(bla2[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa44, shapiro.test(bla2[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(bla2~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+t.test(bla2 ~ Climate, data = Cissa44, var.equal = T) # t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_bla2_Cissa44<-ggplot(aes(y = bla2, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('bla2')*'% of 16S gene'^-1),
+                     limits = c(0, 1.2),              
+                     breaks = c(0, 0.6, 1.2), 
+                     labels = c(0, 0.6, 1.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla2_Cissa44
+
+
+
+# bla_ctxM gene
+# =========
+
+with(Cissa44, shapiro.test(bla_ctxM[Climate=="Current"])) # Testing normality assumption [NOT]
+with(Cissa44, shapiro.test(bla_ctxM[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(bla_ctxM~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+wilcox.test(bla_ctxM ~ Climate, data=Cissa44) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_bla_ctxM_Cissa44<-ggplot(aes(y = bla_ctxM, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('bla_ctxM')* '% of 16S gene'^-1),
+                     limits = c(0, 1.2),              
+                     breaks = c(0, 0.6, 1.2), 
+                     labels = c(0, 0.6, 1.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla_ctxM_Cissa44
+
+
+
+# vanA gene
+# =========
+
+with(Cissa44, shapiro.test(vanA[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa44, shapiro.test(vanA[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(vanA~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+t.test(vanA ~ Climate, data = Cissa44, var.equal = T) # t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_vanA_Cissa44<-ggplot(aes(y = vanA, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('vanA ')*'% of 16S gene'^-1),
+                     limits = c(0, 1.4),              
+                     breaks = c(0, 0.7, 1.4), 
+                     labels = c(0, 0.7, 1.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_vanA_Cissa44
+
+
+
+# ermC gene
+# =========
+
+with(Cissa44, shapiro.test(ermC[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa44, shapiro.test(ermC[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(ermC~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [NOT]
+
+t.test(ermC ~ Climate, data = Cissa44, var.equal = F) # Welch t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_ermC_Cissa44<-ggplot(aes(y = ermC, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('ermC')*'% of 16S gene'^-1),
+                     limits = c(-0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_ermC_Cissa44
+
+
+# qepA gene
+# =========
+
+with(Cissa44, shapiro.test(qepA[Climate=="Current"])) # Testing normality assumption [NOT]
+with(Cissa44, shapiro.test(qepA[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(qepA~Climate, center=mean, data=Cissa44)  # Test homogeneity of variance [OK]
+
+wilcox.test(qepA ~ Climate, data=Cissa44) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_qepa_Cissa44<-ggplot(aes(y = qepA, x = Graph), data = Cissa44)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("A", 
+                            "B"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('qepA ')*'% of 16S gene'^-1),
+                     limits = c(0,30),              
+                     breaks = c(0, 10, 20, 30), 
+                     labels = c(0, 10, 20, 30))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_qepa_Cissa44
+
+
+
+
+
+
+# ------------------------------------------------------------------------------
+# C. issatschenkoi W97
+Cissa97 <- ddpcr[ddpcr$Strain == "W97",]
+# ------------------------------------------------------------------------------
+
+# intI1 gene
+# =========
+
+with(Cissa97, shapiro.test(intI1[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(intI1[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(int1~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+t.test(intI1 ~ Climate, data = Cissa97, var.equal = T) # t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_intI1_Cissa97<-ggplot(aes(y = intI1, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('intI1')* '% of 16S gene'^-1),
+                     limits = c(0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_intI1_Cissa97
+
+
+
+# sul1 gene
+# =========
+
+with(Cissa97, shapiro.test(sull1[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(sull1[Climate=="Elevated"])) # Testing normality assumption [NOT]
+leveneTest(sull1~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+wilcox.test(sull1 ~ Climate, data=Cissa97) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_sull1_Cissa97<-ggplot(aes(y = sull1, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('sull1')*'% of 16S gene'^-1),
+                     limits = c(0, 0.6),              
+                     breaks = c(0, 0.3, 0.6), 
+                     labels = c(0, 0.3, 0.6))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_sull1_Cissa97
+
+
+
+
+# aaCC2 gene
+# =========
+
+with(Cissa97, shapiro.test(aaCC2[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(aaCC2[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(aaCC2~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [NOT]
+
+t.test(intI1 ~ Climate, data = Cissa97, var.equal = F) # Welch t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_aaCC2_Cissa97<-ggplot(aes(y = aaCC2, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('aaCC2')*'% of 16S gene'^-1),
+                     limits = c(0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_aaCC2_Cissa97
+
+
+
+# bla1 gene
+# =========
+
+with(Cissa97, shapiro.test(bla1[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(bla1[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(bla1~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+t.test(bla1 ~ Climate, data = Cissa97, var.equal = T) # t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_bla1_Cissa97<-ggplot(aes(y = bla1, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('bla1')*'% of 16S gene'^-1),
+                     limits = c(0, 0.4),              
+                     breaks = c(0, 0.2, 0.4), 
+                     labels = c(0, 0.2, 0.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla1_Cissa97
+
+
+# bla2 gene
+# =========
+
+with(Cissa97, shapiro.test(bla2[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(bla2[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(bla2~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [NOT]
+
+t.test(bla2 ~ Climate, data = Cissa97, var.equal = F) # Welch t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_bla2_Cissa97<-ggplot(aes(y = bla2, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('bla2')*'% of 16S gene'^-1),
+                     limits = c(0, 1.2),              
+                     breaks = c(0, 0.6, 1.2), 
+                     labels = c(0, 0.6, 1.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla2_Cissa97
+
+
+
+# bla_ctxM gene
+# =========
+
+with(Cissa97, shapiro.test(bla_ctxM[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(bla_ctxM[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(bla_ctxM~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+t.test(bla2 ~ Climate, data = Cissa97, var.equal = T) # t-test
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_bla_ctxM_Cissa97<-ggplot(aes(y = bla_ctxM, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('bla_ctxM')* '% of 16S gene'^-1),
+                     limits = c(0, 1.2),              
+                     breaks = c(0, 0.6, 1.2), 
+                     labels = c(0, 0.6, 1.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_bla_ctxM_Cissa97
+
+
+
+# vanA gene
+# =========
+
+with(Cissa97, shapiro.test(vanA[Climate=="Current"])) # Testing normality assumption [NOT]
+with(Cissa97, shapiro.test(vanA[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(vanA~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+wilcox.test(vanA ~ Climate, data=Cissa97) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_vanA_Cissa97<-ggplot(aes(y = vanA, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('vanA ')*'% of 16S gene'^-1),
+                     limits = c(0, 1.4),              
+                     breaks = c(0, 0.7, 1.4), 
+                     labels = c(0, 0.7, 1.4))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_vanA_Cissa97
+
+
+
+# ermC gene
+# =========
+
+with(Cissa97, shapiro.test(ermC[Climate=="Current"])) # Testing normality assumption [NOT]
+with(Cissa97, shapiro.test(ermC[Climate=="Elevated"])) # Testing normality assumption [OK]
+leveneTest(ermC~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+wilcox.test(ermC ~ Climate, data=Cissa97) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_ermC_Cissa97<-ggplot(aes(y = ermC, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('ermC')*'% of 16S gene'^-1),
+                     limits = c(-0, 0.2),              
+                     breaks = c(0, 0.1, 0.2), 
+                     labels = c(0, 0.1, 0.2))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_ermC_Cissa97
+
+
+# qepA gene
+# =========
+
+with(Cissa97, shapiro.test(qepA[Climate=="Current"])) # Testing normality assumption [OK]
+with(Cissa97, shapiro.test(qepA[Climate=="Elevated"])) # Testing normality assumption [NOT]
+leveneTest(qepA~Climate, center=mean, data=Cissa97)  # Test homogeneity of variance [OK]
+
+wilcox.test(qepA ~ Climate, data=Cissa97) # non-parametric Wilcoxon test (Mann-Whitney test)
+
+# Important function to plot specified statistics such as Min, mean-1SEM, mean, mean+1SEM, and Max)
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), mean(x) - sd(x)/sqrt(length(x)), mean(x), mean(x) + sd(x)/sqrt(length(x)), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v}
+
+# Visualisation 
+plot_qepa_Cissa97<-ggplot(aes(y = qepA, x = Graph), data = Cissa97)+
+  stat_summary(fun.data=MinMeanSEMMax, geom = "boxplot", color=c("blue","tomato4"), 
+               fill=c("skyblue2","tomato"), fatten=2, width=.6) +
+  scale_x_discrete(name=expression('Climate'), 
+                   limits=c("C", 
+                            "D"), 
+                   labels=c(as.expression(bquote("Current")),
+                            as.expression(bquote("Elevated"))))+
+  scale_y_continuous(name =expression(italic('qepA ')*'% of 16S gene'^-1),
+                     limits = c(0, 0.8),              
+                     breaks = c(0, 0.4, 0.8), 
+                     labels = c(0, 0.4, 0.8))+
+  theme(plot.title = element_text(lineheight=.8, size=14, face="bold"),
+        axis.line.y.right=element_line(colour="black"),
+        axis.line.x.bottom=element_line(colour="black"),
+        axis.line.x.top=element_line(color="black"),
+        axis.text.x = element_text(color="black", size=12),
+        axis.text.y = element_text(color="black", size=12),
+        axis.title.x = element_text(color="black", size=12),
+        axis.title.y = element_text(color="black", size=12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "center")
+
+plot_qepa_Cissa97
+
+
+# This function allows to combine plots and export the final graph in tiff format
+# By default I arranged all graphs in one plot (2 x 9). To improve visibility, the arrange could be 2 x 3.  
+tiff("genes_1_t-test.tiff", width = 8.27, height = 11.69, units = 'in', res = 600, bg = "white")
+grid.arrange(plot_intI1_Cissa44, plot_intI1_Cissa97,
+             plot_sull1_Cissa44, plot_sull1_Cissa97,
+             plot_aaCC2_Cissa44, plot_aaCC2_Cissa97,
+             ncol=2, nrow =3)
+dev.off()
+
+
+
+# This function allows to combine plots and export the final graph in tiff format
+# By default I arranged all graphs in one plot (2 x 9). To improve visibility, the arrange could be 2 x 3.  
+tiff("genes_2_t-test.tiff", width = 8.27, height = 11.69, units = 'in', res = 600, bg = "white")
+grid.arrange(plot_bla1_Cissa44, plot_bla1_Cissa97,
+             plot_bla2_Cissa44, plot_bla2_Cissa97,
+             plot_bla_ctxM_Cissa44, plot_bla_ctxM_Cissa97,
+             ncol=2, nrow =3)
+dev.off()
+
+
+# This function allows to combine plots and export the final graph in tiff format
+# By default I arranged all graphs in one plot (2 x 9). 
+tiff("genes_3_t-test.tiff", width = 8.27, height = 11.69, units = 'in', res = 600, bg = "white")
+grid.arrange(plot_vanA_Cissa44, plot_vanA_Cissa97,
+             plot_ermC_Cissa44, plot_ermC_Cissa97,
+             plot_qepa_Cissa44, plot_qepa_Cissa97,
+             ncol=2, nrow =3)
+dev.off()
